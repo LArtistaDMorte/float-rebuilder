@@ -6,6 +6,90 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Helper function to fetch Finnhub data
+async function fetchFinnhubData(ticker: string, apiKey: string | undefined) {
+  if (!apiKey) return [];
+  
+  const data: any[] = [];
+  
+  try {
+    // Fetch company profile for float data
+    const profileResponse = await fetch(
+      `https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}&token=${apiKey}`
+    );
+    
+    if (profileResponse.ok) {
+      const profileData = await profileResponse.json();
+      console.log('Finnhub profile data:', profileData);
+
+      // Fetch historical prices
+      const now = Math.floor(Date.now() / 1000);
+      const oneYearAgo = now - (365 * 24 * 60 * 60);
+      
+      const candleResponse = await fetch(
+        `https://finnhub.io/api/v1/stock/candle?symbol=${ticker}&resolution=D&from=${oneYearAgo}&to=${now}&token=${apiKey}`
+      );
+
+      if (candleResponse.ok) {
+        const candleData = await candleResponse.json();
+        
+        if (candleData.c && candleData.c.length > 0) {
+          for (let i = 0; i < candleData.c.length; i++) {
+            const date = new Date(candleData.t[i] * 1000).toISOString().split('T')[0];
+            const price = candleData.c[i];
+            const shares = profileData.shareOutstanding || null;
+            
+            data.push({
+              date,
+              price,
+              float_shares: shares ? Math.round(shares * 1000000) : null,
+              outstanding_shares: shares ? Math.round(shares * 1000000) : null,
+              market_cap: shares && price ? Math.round(shares * price * 1000000) : null,
+              source: 'finnhub'
+            });
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Finnhub API error:', error);
+  }
+  
+  return data;
+}
+
+// Helper function to fetch AlphaVantage data
+async function fetchAlphaVantageData(ticker: string, apiKey: string | undefined) {
+  if (!apiKey) return [];
+  
+  const data: any[] = [];
+  
+  try {
+    const response = await fetch(
+      `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${ticker}&outputsize=full&apikey=${apiKey}`
+    );
+
+    if (response.ok) {
+      const responseData = await response.json();
+      
+      if (responseData['Time Series (Daily)']) {
+        for (const [date, values] of Object.entries(responseData['Time Series (Daily)'])) {
+          const dailyData = values as Record<string, string>;
+          data.push({
+            date,
+            price: parseFloat(dailyData['4. close']),
+            source: 'alphavantage'
+          });
+        }
+      }
+    }
+  } catch (error) {
+    console.error('AlphaVantage API error:', error);
+  }
+  
+  return data;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -25,9 +109,8 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('supabase_service_role_key')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Get API keys from secrets (optional - configure based on which APIs you want to use)
+    // Get API keys from secrets
     const finnhubKey = Deno.env.get('FINNHUB_API_KEY');
-    const polygonKey = Deno.env.get('POLYGON_API_KEY');
     const alphaVantageKey = Deno.env.get('ALPHA_VANTAGE_API_KEY');
 
     // Get or create ticker record
@@ -48,112 +131,34 @@ serve(async (req) => {
       tickerRecord.data = newTicker;
     }
 
-    const historicalData = [];
+    // Fetch from both APIs in parallel
+    const [finnhubData, alphaVantageData] = await Promise.all([
+      fetchFinnhubData(ticker, finnhubKey),
+      fetchAlphaVantageData(ticker, alphaVantageKey)
+    ]);
 
-    // Try Finnhub API (if key is available)
-    if (finnhubKey) {
-      try {
-        // Fetch company profile for float data
-        const profileResponse = await fetch(
-          `https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}&token=${finnhubKey}`
-        );
-        
-        if (profileResponse.ok) {
-          const profileData = await profileResponse.json();
-          console.log('Finnhub profile data:', profileData);
-
-          // Fetch historical prices
-          const now = Math.floor(Date.now() / 1000);
-          const oneYearAgo = now - (365 * 24 * 60 * 60);
-          
-          const candleResponse = await fetch(
-            `https://finnhub.io/api/v1/stock/candle?symbol=${ticker}&resolution=D&from=${oneYearAgo}&to=${now}&token=${finnhubKey}`
-          );
-
-          if (candleResponse.ok) {
-            const candleData = await candleResponse.json();
-            
-            if (candleData.c && candleData.c.length > 0) {
-              for (let i = 0; i < candleData.c.length; i++) {
-                const date = new Date(candleData.t[i] * 1000).toISOString().split('T')[0];
-                const price = candleData.c[i];
-                const shares = profileData.shareOutstanding || null;
-                
-                historicalData.push({
-                  ticker_id: tickerRecord.data.id,
-                  date,
-                  price,
-                  float_shares: shares ? Math.round(shares * 1000000) : null,
-                  outstanding_shares: shares ? Math.round(shares * 1000000) : null,
-                  market_cap: shares && price ? Math.round(shares * price * 1000000) : null,
-                  source: 'finnhub'
-                });
-              }
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Finnhub API error:', error);
+    // Combine results and deduplicate by date (prefer Finnhub)
+    const dataByDate = new Map();
+    
+    // Add Finnhub data first (higher priority)
+    for (const record of finnhubData) {
+      dataByDate.set(record.date, {
+        ticker_id: tickerRecord.data.id,
+        ...record
+      });
+    }
+    
+    // Add AlphaVantage data only if date doesn't exist
+    for (const record of alphaVantageData) {
+      if (!dataByDate.has(record.date)) {
+        dataByDate.set(record.date, {
+          ticker_id: tickerRecord.data.id,
+          ...record
+        });
       }
     }
-
-    // Try Polygon.io API (if key is available)
-    if (polygonKey && historicalData.length === 0) {
-      try {
-        const from = startDate || new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-        const to = endDate || new Date().toISOString().split('T')[0];
-        
-        const response = await fetch(
-          `https://api.polygon.io/v2/aggs/ticker/${ticker}/range/1/day/${from}/${to}?apiKey=${polygonKey}`
-        );
-
-        if (response.ok) {
-          const data = await response.json();
-          
-          if (data.results) {
-            for (const result of data.results) {
-              const date = new Date(result.t).toISOString().split('T')[0];
-              
-              historicalData.push({
-                ticker_id: tickerRecord.data.id,
-                date,
-                price: result.c,
-                source: 'polygon'
-              });
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Polygon API error:', error);
-      }
-    }
-
-    // Try AlphaVantage API (if key is available)
-    if (alphaVantageKey && historicalData.length === 0) {
-      try {
-        const response = await fetch(
-          `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${ticker}&outputsize=full&apikey=${alphaVantageKey}`
-        );
-
-        if (response.ok) {
-          const data = await response.json();
-          
-          if (data['Time Series (Daily)']) {
-            for (const [date, values] of Object.entries(data['Time Series (Daily)'])) {
-              const dailyData = values as Record<string, string>;
-              historicalData.push({
-                ticker_id: tickerRecord.data.id,
-                date,
-                price: parseFloat(dailyData['4. close']),
-                source: 'alphavantage'
-              });
-            }
-          }
-        }
-      } catch (error) {
-        console.error('AlphaVantage API error:', error);
-      }
-    }
+    
+    const historicalData = Array.from(dataByDate.values());
 
     // Insert historical data into database
     if (historicalData.length > 0) {
@@ -181,7 +186,7 @@ serve(async (req) => {
       return new Response(
         JSON.stringify({
           success: false,
-          message: 'No API keys configured. Please add FINNHUB_API_KEY, POLYGON_API_KEY, or ALPHA_VANTAGE_API_KEY to secrets.',
+          message: 'No API keys configured. Please add FINNHUB_API_KEY or ALPHA_VANTAGE_API_KEY to secrets.',
           ticker: ticker.toUpperCase()
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
