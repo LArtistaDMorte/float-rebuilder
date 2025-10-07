@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Download, TrendingUp, DollarSign, Activity, BarChart3 } from "lucide-react";
+import { Download, TrendingUp, DollarSign, Activity, BarChart3, FileText } from "lucide-react";
 import TickerSearch from "@/components/TickerSearch";
 import MetricsCard from "@/components/MetricsCard";
 import FloatChart from "@/components/FloatChart";
@@ -7,6 +7,7 @@ import CorporateActionsTimeline from "@/components/CorporateActionsTimeline";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { useTickerData, useFetchMarketData, useFetchSECFilings } from "@/hooks/useTickerData";
+import { supabase } from "@/integrations/supabase/client";
 
 const Index = () => {
   const [ticker, setTicker] = useState("");
@@ -15,6 +16,7 @@ const Index = () => {
   const { data: tickerData, isLoading, error, refetch } = useTickerData(selectedTicker);
   const fetchMarketData = useFetchMarketData();
   const fetchSECFilings = useFetchSECFilings();
+  const [isParsing, setIsParsing] = useState(false);
 
   const handleSearch = async () => {
     if (!ticker) {
@@ -106,6 +108,40 @@ const Index = () => {
     };
   };
 
+  const handleParseFilings = async () => {
+    if (!selectedTicker) {
+      toast.error("Please select a ticker first");
+      return;
+    }
+
+    setIsParsing(true);
+    const parsingToast = toast.loading("Parsing SEC filings with AI...");
+
+    try {
+      const { data, error } = await supabase.functions.invoke('parse-sec-filings', {
+        body: { ticker: selectedTicker, limit: 5 }
+      });
+
+      if (error) throw error;
+
+      toast.dismiss(parsingToast);
+      
+      if (data.processed > 0) {
+        toast.success(`Successfully parsed ${data.processed} filings!`);
+        // Refetch data to show updated results
+        await refetch();
+      } else {
+        toast.info(data.message || "No new filings to process");
+      }
+    } catch (error) {
+      console.error("Error parsing filings:", error);
+      toast.dismiss(parsingToast);
+      toast.error("Failed to parse filings. Check console for details.");
+    } finally {
+      setIsParsing(false);
+    }
+  };
+
   const handleExport = (format: "csv" | "json") => {
     if (!tickerData) {
       toast.error("No data to export");
@@ -153,6 +189,16 @@ const Index = () => {
               </p>
             </div>
             <div className="flex gap-2">
+              <Button
+                variant="default"
+                size="sm"
+                onClick={handleParseFilings}
+                disabled={!selectedTicker || isParsing}
+                className="gap-2"
+              >
+                <FileText className="h-4 w-4" />
+                {isParsing ? "Parsing..." : "Parse Filings"}
+              </Button>
               <Button
                 variant="outline"
                 size="sm"

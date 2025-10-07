@@ -1,1 +1,10 @@
 project_id = "uyvygkgpfgzyuakktxkn"
+
+[functions.fetch-sec-filings]
+verify_jwt = false
+
+[functions.fetch-market-data]
+verify_jwt = false
+
+[functions.parse-sec-filings]
+verify_jwt = false
