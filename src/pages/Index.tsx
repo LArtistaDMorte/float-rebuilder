@@ -94,20 +94,23 @@ const Index = () => {
   };
 
   const calculateMetrics = () => {
-    if (!tickerData?.historicalData || tickerData.historicalData.length === 0) {
+    const historicalData = tickerData?.historicalData || [];
+    const corporateActions = tickerData?.corporateActions || [];
+    const latestData = historicalData?.[historicalData.length - 1];
+
+    if (!historicalData || historicalData.length === 0) {
       return {
         currentFloat: "N/A",
         currentMarketCap: "N/A",
         floatChange: "N/A",
-        actionsCount: tickerData?.corporateActions?.length || 0
+        actionsCount: corporateActions?.length || 0
       };
     }
 
-    const latest = tickerData.historicalData[tickerData.historicalData.length - 1];
-    const oldest = tickerData.historicalData[0];
+    const oldest = historicalData[0];
     
-    const floatChange = latest.float_shares && oldest.float_shares
-      ? ((latest.float_shares - oldest.float_shares) / oldest.float_shares * 100)
+    const floatChange = latestData?.float_shares && oldest.float_shares
+      ? ((latestData.float_shares - oldest.float_shares) / oldest.float_shares * 100)
       : null;
 
     const floatChangeStr = floatChange !== null 
@@ -115,14 +118,14 @@ const Index = () => {
       : "N/A";
 
     return {
-      currentFloat: latest.float_shares 
-        ? `${(latest.float_shares / 1000000).toFixed(1)}M`
+      currentFloat: latestData?.float_shares 
+        ? `${(latestData.float_shares / 1000000).toFixed(1)}M`
         : "N/A",
-      currentMarketCap: latest.market_cap
-        ? `$${(latest.market_cap / 1000000000).toFixed(2)}B`
+      currentMarketCap: latestData?.market_cap
+        ? `$${(latestData.market_cap / 1000000000).toFixed(2)}B`
         : "N/A",
       floatChange: floatChangeStr,
-      actionsCount: tickerData.corporateActions?.length || 0
+      actionsCount: corporateActions?.length || 0
     };
   };
 
