@@ -43,40 +43,63 @@ serve(async (req) => {
       tickerRecord.data = newTicker;
     }
 
-    // Fetch SEC filings from EDGAR API
+    // Fetch SEC filings using new EDGAR API
     // SEC EDGAR API documentation: https://www.sec.gov/edgar/sec-api-documentation
-    const userAgent = 'FloatTracker/1.0 (contact@example.com)';
+    const userAgent = 'FloatTracker/1.0 contact@example.com';
     
-    const cikResponse = await fetch(
-      `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&ticker=${ticker}&type=&dateb=&owner=exclude&count=10&output=json`,
+    // First, get the company tickers to find CIK
+    const tickersResponse = await fetch(
+      'https://www.sec.gov/files/company_tickers.json',
       { headers: { 'User-Agent': userAgent } }
     );
 
-    if (!cikResponse.ok) {
-      throw new Error(`SEC API error: ${cikResponse.statusText}`);
+    if (!tickersResponse.ok) {
+      throw new Error(`SEC API error: ${tickersResponse.statusText}`);
     }
 
-    const cikData = await cikResponse.json();
+    const tickersData = await tickersResponse.json();
     
-    // Fetch recent filings (8-K, 10-Q, 10-K, S-1, etc.)
-    const filingTypes = ['8-K', '10-Q', '10-K', 'S-1', 'S-3', '424B'];
+    // Find CIK for the ticker
+    const companyData = Object.values(tickersData).find(
+      (company: any) => company.ticker.toUpperCase() === ticker.toUpperCase()
+    ) as any;
+
+    if (!companyData) {
+      throw new Error(`Ticker ${ticker} not found in SEC database`);
+    }
+
+    const cik = String(companyData.cik_str).padStart(10, '0');
+    
+    // Fetch company submissions
+    const submissionsResponse = await fetch(
+      `https://data.sec.gov/submissions/CIK${cik}.json`,
+      { headers: { 'User-Agent': userAgent } }
+    );
+
+    if (!submissionsResponse.ok) {
+      throw new Error(`SEC submissions API error: ${submissionsResponse.statusText}`);
+    }
+
+    const submissionsData = await submissionsResponse.json();
+    
+    // Filter for relevant filing types
+    const filingTypes = ['8-K', '10-Q', '10-K', 'S-1', 'S-3', '424B5'];
     const filings = [];
 
-    for (const filingType of filingTypes) {
-      const filingResponse = await fetch(
-        `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&ticker=${ticker}&type=${filingType}&dateb=&owner=exclude&count=20&output=json`,
-        { headers: { 'User-Agent': userAgent } }
-      );
-
-      if (filingResponse.ok) {
-        const filingData = await filingResponse.json();
-        if (filingData.filings?.recent) {
-          filings.push(...filingData.filings.recent);
+    const recentFilings = submissionsData.filings?.recent;
+    if (recentFilings) {
+      for (let i = 0; i < recentFilings.form.length && i < 50; i++) {
+        const form = recentFilings.form[i];
+        if (filingTypes.includes(form)) {
+          filings.push({
+            type: form,
+            filingDate: recentFilings.filingDate[i],
+            accessionNumber: recentFilings.accessionNumber[i].replace(/-/g, ''),
+            primaryDocument: recentFilings.primaryDocument[i],
+            cik: cik
+          });
         }
       }
-
-      // Rate limiting - SEC requires 10 requests per second max
-      await new Promise(resolve => setTimeout(resolve, 150));
     }
 
     // Store filings in database
@@ -85,7 +108,7 @@ serve(async (req) => {
       filing_type: filing.type,
       filing_date: filing.filingDate,
       accession_number: filing.accessionNumber,
-      filing_url: `https://www.sec.gov/cgi-bin/viewer?action=view&cik=${filing.cik}&accession_number=${filing.accessionNumber}&xbrl_type=v`,
+      filing_url: `https://www.sec.gov/Archives/edgar/data/${cik}/${filing.accessionNumber}/${filing.primaryDocument}`,
       parsed_data: filing,
       processed: false
     }));
