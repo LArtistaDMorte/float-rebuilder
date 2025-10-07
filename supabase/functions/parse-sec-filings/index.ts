@@ -71,8 +71,15 @@ serve(async (req) => {
       try {
         console.log(`Processing filing: ${filing.filing_type} from ${filing.filing_date}`);
 
-        // Fetch the actual filing document
-        let filingText = '';
+        // Initialize extracted data structure
+        let extractedData: any = { 
+          outstanding_shares: null, 
+          float_shares: null, 
+          public_float_usd: null, 
+          public_float_date: null, 
+          corporate_actions: [] 
+        };
+        
         if (filing.filing_url) {
           try {
             const response = await fetch(filing.filing_url, {
@@ -83,95 +90,201 @@ serve(async (req) => {
             });
             const html = await response.text();
             
-            // Basic HTML to text conversion - strip tags and get text content
-            filingText = html
+            // Basic HTML to text conversion
+            const filingText = html
               .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
               .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
               .replace(/<[^>]+>/g, ' ')
               .replace(/\s+/g, ' ')
               .trim();
 
-            // Limit to first 30,000 characters to avoid token limits
-            filingText = filingText.substring(0, 30000);
-          } catch (fetchError) {
-            console.error('Error fetching filing document:', fetchError);
-            filingText = 'Filing document could not be retrieved.';
-          }
-        }
+            // Extract relevant sections for AI analysis
+            const relevantSections: string[] = [];
+            
+            const coverPageMatch = filingText.match(/(class\s*of\s*stock|shares?\s+outstanding|public\s+float).{0,5000}/i);
+            if (coverPageMatch) relevantSections.push(coverPageMatch[0]);
+            
+            const capitalMatch = filingText.match(/(capital\s+stock|stockholders.{0,200}equity|description\s+of\s+securities).{0,3000}/i);
+            if (capitalMatch) relevantSections.push(capitalMatch[0]);
 
-        // Use Lovable AI to extract data
-        const aiPrompt = `You are a financial data extraction expert. Analyze this SEC ${filing.filing_type} filing and extract:
+            const splitMatch = filingText.match(/(stock\s+split|reverse\s+split|split.{0,200}ratio).{0,2000}/gi);
+            if (splitMatch) relevantSections.push(...splitMatch);
 
-1. Outstanding shares count (total shares issued)
-2. Float shares (shares available for public trading, excluding restricted/insider shares)
-3. Any corporate actions (stock splits, reverse splits, offerings, buybacks)
-4. Effective dates for each data point
+            const offeringMatch = filingText.match(/(public\s+offering|secondary\s+offering|registered\s+direct).{0,2000}/gi);
+            if (offeringMatch) relevantSections.push(...offeringMatch);
 
-Filing excerpt:
-${filingText}
+            // Use regex to extract key data points
+            const outstandingMatch = filingText.match(/outstanding[:\s]+([0-9,]+)\s*(shares?|common\s+stock)/i);
+            if (outstandingMatch) {
+              extractedData.outstanding_shares = parseInt(outstandingMatch[1].replace(/,/g, ''));
+              console.log('Regex extracted outstanding shares:', extractedData.outstanding_shares);
+            }
 
-Return ONLY valid JSON in this exact format:
+            const publicFloatMatch = filingText.match(/public\s+float[:\s]+\$([0-9,.]+)\s*(million|billion)?/i);
+            if (publicFloatMatch) {
+              let floatValue = parseFloat(publicFloatMatch[1].replace(/,/g, ''));
+              if (publicFloatMatch[2]?.toLowerCase() === 'million') floatValue *= 1_000_000;
+              if (publicFloatMatch[2]?.toLowerCase() === 'billion') floatValue *= 1_000_000_000;
+              extractedData.public_float_usd = floatValue;
+              console.log('Regex extracted public float USD:', extractedData.public_float_usd);
+              
+              const floatDateMatch = filingText.match(/public\s+float.{0,200}(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2},?\s+\d{4}/i);
+              if (floatDateMatch) {
+                extractedData.public_float_date = floatDateMatch[1];
+                console.log('Found public float date:', extractedData.public_float_date);
+              }
+            }
+
+            const splitRatioMatch = filingText.match(/(\d+)\s*-?\s*for\s*-?\s*(\d+)\s*(reverse\s+)?split/i);
+            if (splitRatioMatch) {
+              console.log('Regex detected split:', splitRatioMatch[0]);
+            }
+
+            // Prepare focused text for AI
+            const focusedText = relevantSections.length > 0 
+              ? relevantSections.join('\n\n---\n\n').substring(0, 15000)
+              : filingText.substring(0, 15000);
+
+            // Enhanced AI prompt
+            const aiPrompt = `You are analyzing a ${filing.filing_type} SEC filing. Extract ONLY the following data points:
+
+1. outstanding_shares: Total common shares issued and outstanding (number only)
+2. float_shares: Public float shares available for trading (if mentioned as share count)
+3. public_float_usd: Public float value in USD (if mentioned as dollar amount)
+4. public_float_date: Date associated with the public float figure (YYYY-MM-DD format)
+5. corporate_actions: Array of material events (splits, reverse splits, offerings, buybacks)
+
+CRITICAL RULES:
+- Return NULL if data is not found or unclear
+- For public_float_usd, only extract if it says "public float" with a dollar amount
+- For corporate_actions, only include if there's an actual event with a date
+- If you see a stock split, include the ratio (e.g., "1-for-10" for reverse split)
+
+Filing sections:
+${focusedText}
+
+Return ONLY valid JSON with NO markdown:
 {
   "outstanding_shares": number or null,
   "float_shares": number or null,
-  "market_cap": number or null,
+  "public_float_usd": number or null,
+  "public_float_date": "YYYY-MM-DD" or null,
   "corporate_actions": [
     {
-      "action_type": "split|reverse_split|offering|buyback|other",
+      "action_type": "split|reverse_split|offering|buyback",
       "action_date": "YYYY-MM-DD",
-      "description": "brief description",
+      "description": "concise description",
       "shares_before": number or null,
       "shares_after": number or null,
-      "split_ratio": "e.g., 2-for-1" or null,
-      "impact_description": "how this affects float/shares"
+      "split_ratio": "X-for-Y" or null,
+      "impact_description": "effect on float"
     }
   ]
 }`;
 
-        console.log('Sending to Lovable AI for analysis...');
+            console.log('Sending to Lovable AI for analysis...');
 
-        const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${lovableApiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'google/gemini-2.5-flash',
-            messages: [
-              { 
-                role: 'system', 
-                content: 'You are a financial data extraction expert. Always return valid JSON only, no markdown or explanation.' 
+            const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${lovableApiKey}`,
+                'Content-Type': 'application/json',
               },
-              { role: 'user', content: aiPrompt }
-            ],
-            temperature: 0.1,
-          }),
-        });
+              body: JSON.stringify({
+                model: 'google/gemini-2.5-flash',
+                messages: [
+                  { 
+                    role: 'system', 
+                    content: 'You are a financial data extraction expert. Always return valid JSON only, no markdown or explanation.' 
+                  },
+                  { role: 'user', content: aiPrompt }
+                ],
+                temperature: 0.1,
+              }),
+            });
 
-        if (!aiResponse.ok) {
-          const errorText = await aiResponse.text();
-          console.error('AI API error:', aiResponse.status, errorText);
-          throw new Error(`AI API error: ${aiResponse.status}`);
+            if (!aiResponse.ok) {
+              const errorText = await aiResponse.text();
+              console.error('AI API error:', aiResponse.status, errorText);
+              throw new Error(`AI API error: ${aiResponse.status}`);
+            }
+
+            const aiData = await aiResponse.json();
+            const extractedContent = aiData.choices[0].message.content;
+            
+            console.log('AI response:', extractedContent);
+
+            // Parse AI response and merge with regex data
+            try {
+              const cleanedContent = extractedContent
+                .replace(/```json\n?/g, '')
+                .replace(/```\n?/g, '')
+                .trim();
+              const aiExtracted = JSON.parse(cleanedContent);
+              
+              // Merge: prefer AI data if present, otherwise use regex
+              extractedData = {
+                outstanding_shares: aiExtracted.outstanding_shares || extractedData.outstanding_shares,
+                float_shares: aiExtracted.float_shares || extractedData.float_shares,
+                public_float_usd: aiExtracted.public_float_usd || extractedData.public_float_usd,
+                public_float_date: aiExtracted.public_float_date || extractedData.public_float_date,
+                corporate_actions: aiExtracted.corporate_actions || []
+              };
+            } catch (parseError) {
+              console.error('Failed to parse AI response:', extractedContent);
+            }
+          } catch (fetchError) {
+            console.error('Error fetching filing document:', fetchError);
+          }
         }
 
-        const aiData = await aiResponse.json();
-        const extractedContent = aiData.choices[0].message.content;
-        
-        console.log('AI response:', extractedContent);
+        // Convert public_float_usd to float_shares if needed
+        if (extractedData.public_float_usd && !extractedData.float_shares) {
+          console.log('Attempting to convert public_float_usd to float_shares...');
+          
+          const targetDate = extractedData.public_float_date || filing.filing_date;
+          const { data: priceData } = await supabase
+            .from('historical_data')
+            .select('price, date')
+            .eq('ticker_id', tickerData.id)
+            .not('price', 'is', null)
+            .order('date', { ascending: false })
+            .limit(100);
+          
+          if (priceData && priceData.length > 0) {
+            const targetTime = new Date(targetDate).getTime();
+            let closestPrice = priceData[0];
+            let minDiff = Math.abs(new Date(priceData[0].date).getTime() - targetTime);
+            
+            for (const p of priceData) {
+              const diff = Math.abs(new Date(p.date).getTime() - targetTime);
+              if (diff < minDiff) {
+                minDiff = diff;
+                closestPrice = p;
+              }
+            }
+            
+            if (closestPrice.price && closestPrice.price > 0) {
+              extractedData.float_shares = Math.round(extractedData.public_float_usd / closestPrice.price);
+              console.log(`Converted $${extractedData.public_float_usd} to ${extractedData.float_shares} shares using price $${closestPrice.price} from ${closestPrice.date}`);
+            }
+          }
+        }
 
-        // Parse the AI response
-        let extractedData;
-        try {
-          // Remove markdown code blocks if present
-          const cleanedContent = extractedContent
-            .replace(/```json\n?/g, '')
-            .replace(/```\n?/g, '')
-            .trim();
-          extractedData = JSON.parse(cleanedContent);
-        } catch (parseError) {
-          console.error('Failed to parse AI response:', extractedContent);
-          throw new Error('Invalid JSON from AI');
+        // Compute market_cap if we have outstanding_shares
+        let market_cap = null;
+        if (extractedData.outstanding_shares) {
+          const { data: priceData } = await supabase
+            .from('historical_data')
+            .select('price')
+            .eq('ticker_id', tickerData.id)
+            .eq('date', filing.filing_date)
+            .maybeSingle();
+          
+          if (priceData?.price) {
+            market_cap = extractedData.outstanding_shares * priceData.price;
+            console.log(`Computed market cap: ${market_cap}`);
+          }
         }
 
         // Insert historical data if we have share counts
@@ -183,7 +296,7 @@ Return ONLY valid JSON in this exact format:
               date: filing.filing_date,
               outstanding_shares: extractedData.outstanding_shares,
               float_shares: extractedData.float_shares,
-              market_cap: extractedData.market_cap,
+              market_cap: market_cap,
               source: `SEC ${filing.filing_type}`,
             }, {
               onConflict: 'ticker_id,date',
