@@ -114,23 +114,36 @@ serve(async (req) => {
             if (offeringMatch) relevantSections.push(...offeringMatch);
 
             // Use regex to extract key data points
-            const outstandingMatch = filingText.match(/outstanding[:\s]+([0-9,]+)\s*(shares?|common\s+stock)/i);
+            // Outstanding shares (handle multiple phrasings)
+            let outstandingMatch = filingText.match(/outstanding[:\s]+([0-9,\.]+)\s*(shares?|common\s+stock)/i);
+            if (!outstandingMatch) {
+              outstandingMatch = filingText.match(/shares?\s+outstanding[^0-9]{0,40}([0-9][0-9,\.]*)/i);
+            }
+            if (!outstandingMatch) {
+              const alt = filingText.match(/as\s+of\s+[^\n]{0,60}?there\s+were\s+([0-9][0-9,\.]*)\s+(?:shares|of\s+common\s+stock)\s+outstanding/i);
+              if (alt) outstandingMatch = alt;
+            }
             if (outstandingMatch) {
-              extractedData.outstanding_shares = parseInt(outstandingMatch[1].replace(/,/g, ''));
+              extractedData.outstanding_shares = Math.round(parseFloat(outstandingMatch[1].replace(/,/g, '')));
               console.log('Regex extracted outstanding shares:', extractedData.outstanding_shares);
             }
 
-            const publicFloatMatch = filingText.match(/public\s+float[:\s]+\$([0-9,.]+)\s*(million|billion)?/i);
+            // Public float in USD (aka aggregate market value of non-affiliates)
+            let publicFloatMatch = filingText.match(/public\s+float[:\s]+\$([0-9,.]+)\s*(million|billion)?/i);
+            if (!publicFloatMatch) {
+              publicFloatMatch = filingText.match(/aggregate\s+market\s+value[^$]{0,120}\$([0-9,.]+)\s*(million|billion)?[^\n]{0,80}(?:held\s+by\s+non-affiliates|non\s*affiliates)/i);
+            }
             if (publicFloatMatch) {
               let floatValue = parseFloat(publicFloatMatch[1].replace(/,/g, ''));
-              if (publicFloatMatch[2]?.toLowerCase() === 'million') floatValue *= 1_000_000;
-              if (publicFloatMatch[2]?.toLowerCase() === 'billion') floatValue *= 1_000_000_000;
+              const scale = publicFloatMatch[2]?.toLowerCase();
+              if (scale === 'million') floatValue *= 1_000_000;
+              if (scale === 'billion') floatValue *= 1_000_000_000;
               extractedData.public_float_usd = floatValue;
               console.log('Regex extracted public float USD:', extractedData.public_float_usd);
               
-              const floatDateMatch = filingText.match(/public\s+float.{0,200}(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2},?\s+\d{4}/i);
+              const floatDateMatch = filingText.match(/(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2},?\s+\d{4}/i);
               if (floatDateMatch) {
-                extractedData.public_float_date = floatDateMatch[1];
+                extractedData.public_float_date = floatDateMatch[0];
                 console.log('Found public float date:', extractedData.public_float_date);
               }
             }
@@ -287,26 +300,43 @@ Return ONLY valid JSON with NO markdown:
           }
         }
 
-        // Insert historical data if we have share counts
+        // Insert or update historical data if we have share counts
         if (extractedData.outstanding_shares || extractedData.float_shares) {
-          const { error: histError } = await supabase
+          // First try to update existing row for that date
+          const { data: updData, error: updErr } = await supabase
             .from('historical_data')
-            .upsert({
-              ticker_id: tickerData.id,
-              date: filing.filing_date,
+            .update({
               outstanding_shares: extractedData.outstanding_shares,
               float_shares: extractedData.float_shares,
               market_cap: market_cap,
               source: `SEC ${filing.filing_type}`,
-            }, {
-              onConflict: 'ticker_id,date',
-              ignoreDuplicates: false,
-            });
+            })
+            .eq('ticker_id', tickerData.id)
+            .eq('date', filing.filing_date)
+            .select('id');
 
-          if (histError) {
-            console.error('Error inserting historical data:', histError);
+          if (updErr) {
+            console.error('Error updating historical data:', updErr);
+          }
+
+          if (!updData || updData.length === 0) {
+            const { error: insErr } = await supabase
+              .from('historical_data')
+              .insert({
+                ticker_id: tickerData.id,
+                date: filing.filing_date,
+                outstanding_shares: extractedData.outstanding_shares,
+                float_shares: extractedData.float_shares,
+                market_cap: market_cap,
+                source: `SEC ${filing.filing_type}`,
+              });
+            if (insErr) {
+              console.error('Error inserting historical data:', insErr);
+            } else {
+              console.log('Inserted historical data for', filing.filing_date);
+            }
           } else {
-            console.log('Inserted historical data for', filing.filing_date);
+            console.log('Updated historical data for', filing.filing_date);
           }
         }
 
