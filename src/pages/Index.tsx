@@ -13,7 +13,11 @@ const Index = () => {
   const [ticker, setTicker] = useState("");
   const [selectedTicker, setSelectedTicker] = useState("");
   
-  const { data: tickerData, isLoading, error, refetch } = useTickerData(selectedTicker);
+  const { data, isLoading, error, refetch } = useTickerData(selectedTicker);
+  const tickerInfo = data?.ticker;
+  const historicalData = data?.historicalData || [];
+  const corporateActions = data?.corporateActions || [];
+  
   const fetchMarketData = useFetchMarketData();
   const fetchSECFilings = useFetchSECFilings();
 
@@ -73,9 +77,9 @@ const Index = () => {
   };
 
   const formatChartData = () => {
-    if (!tickerData?.historicalData) return [];
+    if (!historicalData || historicalData.length === 0) return [];
     
-    return tickerData.historicalData.map(point => ({
+    return historicalData.map(point => ({
       date: new Date(point.date).toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
       float: point.float_shares || 0,
       marketCap: point.market_cap || 0
@@ -83,9 +87,9 @@ const Index = () => {
   };
 
   const formatActions = () => {
-    if (!tickerData?.corporateActions) return [];
+    if (!corporateActions || corporateActions.length === 0) return [];
     
-    return tickerData.corporateActions.map(action => ({
+    return corporateActions.map(action => ({
       date: new Date(action.action_date).toLocaleDateString(),
       type: action.action_type as "split" | "offering" | "warrant" | "dilution",
       description: action.description,
@@ -94,8 +98,6 @@ const Index = () => {
   };
 
   const calculateMetrics = () => {
-    const historicalData = tickerData?.historicalData || [];
-    const corporateActions = tickerData?.corporateActions || [];
     const latestData = historicalData?.[historicalData.length - 1];
 
     if (!historicalData || historicalData.length === 0) {
@@ -130,13 +132,13 @@ const Index = () => {
   };
 
   const handleExport = (format: "csv" | "json") => {
-    if (!tickerData) {
+    if (!data) {
       toast.error("No data to export");
       return;
     }
 
     if (format === "json") {
-      const dataStr = JSON.stringify(tickerData, null, 2);
+      const dataStr = JSON.stringify(data, null, 2);
       const dataBlob = new Blob([dataStr], { type: 'application/json' });
       const url = URL.createObjectURL(dataBlob);
       const link = document.createElement('a');
@@ -146,7 +148,7 @@ const Index = () => {
     } else {
       // CSV export
       let csv = "Date,Float Shares,Market Cap,Price\n";
-      tickerData.historicalData.forEach(point => {
+      historicalData.forEach(point => {
         csv += `${point.date},${point.float_shares || ''},${point.market_cap || ''},${point.price || ''}\n`;
       });
       
@@ -211,7 +213,7 @@ const Index = () => {
         </div>
 
         {/* Metrics Cards */}
-        {selectedTicker && tickerData && !isLoading && (
+        {selectedTicker && data && !isLoading && (
           <>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
               <MetricsCard
@@ -285,7 +287,7 @@ const Index = () => {
         )}
 
         {/* No Data Available State */}
-        {selectedTicker && !tickerData && !isLoading && !error && (
+        {selectedTicker && !data && !isLoading && !error && (
           <div className="text-center py-20">
             <BarChart3 className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
             <h2 className="text-2xl font-semibold mb-2">No Data Available Yet</h2>
