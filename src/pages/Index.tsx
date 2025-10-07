@@ -17,6 +17,7 @@ const Index = () => {
   const tickerInfo = data?.ticker;
   const historicalData = data?.historicalData || [];
   const corporateActions = data?.corporateActions || [];
+  const latestData = historicalData.at(-1);
   
   const fetchMarketData = useFetchMarketData();
   const fetchSECFilings = useFetchSECFilings();
