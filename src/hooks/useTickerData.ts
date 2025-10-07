@@ -21,41 +21,59 @@ export const useTickerData = (ticker: string | null) => {
   return useQuery({
     queryKey: ["ticker-data", ticker],
     queryFn: async () => {
-      if (!ticker) return null;
+      try {
+        if (!ticker) return null;
 
-      // Get ticker record
-      const { data: tickerData, error: tickerError } = await supabase
-        .from("tickers")
-        .select("*")
-        .eq("symbol", ticker.toUpperCase())
-        .maybeSingle();
+        // Get ticker record
+        const { data: tickerData, error: tickerError } = await supabase
+          .from("tickers")
+          .select("*")
+          .eq("symbol", ticker.toUpperCase())
+          .maybeSingle();
 
-      if (tickerError) throw tickerError;
-      if (!tickerData) return null;
+        if (tickerError) {
+          console.error('Error fetching ticker data:', tickerError);
+          throw tickerError;
+        }
+        
+        if (!tickerData) {
+          console.log(`No ticker found for symbol: ${ticker}`);
+          return null;
+        }
 
-      // Get historical data
-      const { data: historicalData, error: historicalError } = await supabase
-        .from("historical_data")
-        .select("date, float_shares, market_cap, price")
-        .eq("ticker_id", tickerData.id)
-        .order("date", { ascending: true });
+        // Get historical data
+        const { data: historicalData, error: historicalError } = await supabase
+          .from("historical_data")
+          .select("date, float_shares, market_cap, price")
+          .eq("ticker_id", tickerData.id)
+          .order("date", { ascending: true });
 
-      if (historicalError) throw historicalError;
+        if (historicalError) {
+          console.error('Error fetching historical data:', historicalError);
+          throw historicalError;
+        }
 
-      // Get corporate actions
-      const { data: corporateActions, error: actionsError } = await supabase
-        .from("corporate_actions")
-        .select("*")
-        .eq("ticker_id", tickerData.id)
-        .order("action_date", { ascending: false });
+        // Get corporate actions
+        const { data: corporateActions, error: actionsError } = await supabase
+          .from("corporate_actions")
+          .select("*")
+          .eq("ticker_id", tickerData.id)
+          .order("action_date", { ascending: false });
 
-      if (actionsError) throw actionsError;
+        if (actionsError) {
+          console.error('Error fetching corporate actions:', actionsError);
+          throw actionsError;
+        }
 
-      return {
-        ticker: tickerData,
-        historicalData: historicalData as HistoricalDataPoint[],
-        corporateActions: corporateActions as CorporateAction[],
-      };
+        return {
+          ticker: tickerData,
+          historicalData: historicalData as HistoricalDataPoint[],
+          corporateActions: corporateActions as CorporateAction[],
+        };
+      } catch (err) {
+        console.error('useTickerData error:', err);
+        throw err;
+      }
     },
     enabled: !!ticker,
   });
