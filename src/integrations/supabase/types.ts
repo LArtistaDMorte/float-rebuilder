@@ -14,7 +14,177 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      corporate_actions: {
+        Row: {
+          action_date: string
+          action_type: string
+          created_at: string | null
+          description: string
+          filing_url: string | null
+          id: string
+          impact_description: string | null
+          shares_after: number | null
+          shares_before: number | null
+          source: string | null
+          split_ratio: string | null
+          ticker_id: string
+        }
+        Insert: {
+          action_date: string
+          action_type: string
+          created_at?: string | null
+          description: string
+          filing_url?: string | null
+          id?: string
+          impact_description?: string | null
+          shares_after?: number | null
+          shares_before?: number | null
+          source?: string | null
+          split_ratio?: string | null
+          ticker_id: string
+        }
+        Update: {
+          action_date?: string
+          action_type?: string
+          created_at?: string | null
+          description?: string
+          filing_url?: string | null
+          id?: string
+          impact_description?: string | null
+          shares_after?: number | null
+          shares_before?: number | null
+          source?: string | null
+          split_ratio?: string | null
+          ticker_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "corporate_actions_ticker_id_fkey"
+            columns: ["ticker_id"]
+            isOneToOne: false
+            referencedRelation: "tickers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      historical_data: {
+        Row: {
+          created_at: string | null
+          date: string
+          float_shares: number | null
+          id: string
+          market_cap: number | null
+          outstanding_shares: number | null
+          price: number | null
+          source: string | null
+          ticker_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          date: string
+          float_shares?: number | null
+          id?: string
+          market_cap?: number | null
+          outstanding_shares?: number | null
+          price?: number | null
+          source?: string | null
+          ticker_id: string
+        }
+        Update: {
+          created_at?: string | null
+          date?: string
+          float_shares?: number | null
+          id?: string
+          market_cap?: number | null
+          outstanding_shares?: number | null
+          price?: number | null
+          source?: string | null
+          ticker_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "historical_data_ticker_id_fkey"
+            columns: ["ticker_id"]
+            isOneToOne: false
+            referencedRelation: "tickers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sec_filings: {
+        Row: {
+          accession_number: string | null
+          created_at: string | null
+          filing_date: string
+          filing_type: string
+          filing_url: string | null
+          id: string
+          parsed_data: Json | null
+          processed: boolean | null
+          ticker_id: string
+        }
+        Insert: {
+          accession_number?: string | null
+          created_at?: string | null
+          filing_date: string
+          filing_type: string
+          filing_url?: string | null
+          id?: string
+          parsed_data?: Json | null
+          processed?: boolean | null
+          ticker_id: string
+        }
+        Update: {
+          accession_number?: string | null
+          created_at?: string | null
+          filing_date?: string
+          filing_type?: string
+          filing_url?: string | null
+          id?: string
+          parsed_data?: Json | null
+          processed?: boolean | null
+          ticker_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sec_filings_ticker_id_fkey"
+            columns: ["ticker_id"]
+            isOneToOne: false
+            referencedRelation: "tickers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tickers: {
+        Row: {
+          company_name: string | null
+          created_at: string | null
+          exchange: string | null
+          id: string
+          last_updated: string | null
+          sector: string | null
+          symbol: string
+        }
+        Insert: {
+          company_name?: string | null
+          created_at?: string | null
+          exchange?: string | null
+          id?: string
+          last_updated?: string | null
+          sector?: string | null
+          symbol: string
+        }
+        Update: {
+          company_name?: string | null
+          created_at?: string | null
+          exchange?: string | null
+          id?: string
+          last_updated?: string | null
+          sector?: string | null
+          symbol?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

@@ -6,60 +6,129 @@ import FloatChart from "@/components/FloatChart";
 import CorporateActionsTimeline from "@/components/CorporateActionsTimeline";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { useTickerData, useFetchMarketData, useFetchSECFilings } from "@/hooks/useTickerData";
 
 const Index = () => {
   const [ticker, setTicker] = useState("");
   const [selectedTicker, setSelectedTicker] = useState("");
+  
+  const { data: tickerData, isLoading, refetch } = useTickerData(selectedTicker);
+  const fetchMarketData = useFetchMarketData();
+  const fetchSECFilings = useFetchSECFilings();
 
-  // Mock data for demonstration
-  const mockChartData = [
-    { date: "2023-01", float: 50000000, marketCap: 1500000000 },
-    { date: "2023-04", float: 48000000, marketCap: 1600000000 },
-    { date: "2023-07", float: 25000000, marketCap: 1400000000 },
-    { date: "2023-10", float: 24000000, marketCap: 1800000000 },
-    { date: "2024-01", float: 30000000, marketCap: 2200000000 },
-    { date: "2024-04", float: 35000000, marketCap: 2500000000 },
-  ];
-
-  const mockActions = [
-    {
-      date: "2024-03-15",
-      type: "offering" as const,
-      description: "Secondary Offering - 5M shares",
-      impact: "Float increased by 16.7% from 30M to 35M shares"
-    },
-    {
-      date: "2023-11-20",
-      type: "warrant" as const,
-      description: "Warrant Exercise - Series A",
-      impact: "Float increased by 6M shares (25% increase)"
-    },
-    {
-      date: "2023-06-10",
-      type: "split" as const,
-      description: "1-for-2 Reverse Split",
-      impact: "Outstanding shares reduced from 96M to 48M"
-    },
-    {
-      date: "2023-03-01",
-      type: "dilution" as const,
-      description: "Direct Offering - $25M at $2.50/share",
-      impact: "Added 10M shares, 20% dilution"
-    }
-  ];
-
-  const handleSearch = () => {
+  const handleSearch = async () => {
     if (!ticker) {
       toast.error("Please enter a ticker symbol");
       return;
     }
+    
     setSelectedTicker(ticker);
-    toast.success(`Loading data for ${ticker}...`);
+    toast.loading("Fetching data...");
+    
+    try {
+      // Fetch SEC filings
+      await fetchSECFilings(ticker);
+      
+      // Fetch market data
+      await fetchMarketData(ticker);
+      
+      // Refetch the data
+      await refetch();
+      
+      toast.success(`Data loaded for ${ticker}`);
+    } catch (error) {
+      console.error("Error fetching data:", error);
+      toast.error("Failed to fetch data. See console for details.");
+    }
+  };
+
+  const formatChartData = () => {
+    if (!tickerData?.historicalData) return [];
+    
+    return tickerData.historicalData.map(point => ({
+      date: new Date(point.date).toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+      float: point.float_shares || 0,
+      marketCap: point.market_cap || 0
+    }));
+  };
+
+  const formatActions = () => {
+    if (!tickerData?.corporateActions) return [];
+    
+    return tickerData.corporateActions.map(action => ({
+      date: new Date(action.action_date).toLocaleDateString(),
+      type: action.action_type as "split" | "offering" | "warrant" | "dilution",
+      description: action.description,
+      impact: action.impact_description || "Impact data not available"
+    }));
+  };
+
+  const calculateMetrics = () => {
+    if (!tickerData?.historicalData || tickerData.historicalData.length === 0) {
+      return {
+        currentFloat: "N/A",
+        currentMarketCap: "N/A",
+        floatChange: "N/A",
+        actionsCount: tickerData?.corporateActions?.length || 0
+      };
+    }
+
+    const latest = tickerData.historicalData[tickerData.historicalData.length - 1];
+    const oldest = tickerData.historicalData[0];
+    
+    const floatChange = latest.float_shares && oldest.float_shares
+      ? ((latest.float_shares - oldest.float_shares) / oldest.float_shares * 100)
+      : null;
+
+    const floatChangeStr = floatChange !== null 
+      ? `${floatChange > 0 ? '+' : ''}${floatChange.toFixed(1)}%`
+      : "N/A";
+
+    return {
+      currentFloat: latest.float_shares 
+        ? `${(latest.float_shares / 1000000).toFixed(1)}M`
+        : "N/A",
+      currentMarketCap: latest.market_cap
+        ? `$${(latest.market_cap / 1000000000).toFixed(2)}B`
+        : "N/A",
+      floatChange: floatChangeStr,
+      actionsCount: tickerData.corporateActions?.length || 0
+    };
   };
 
   const handleExport = (format: "csv" | "json") => {
-    toast.success(`Exporting data as ${format.toUpperCase()}...`);
+    if (!tickerData) {
+      toast.error("No data to export");
+      return;
+    }
+
+    if (format === "json") {
+      const dataStr = JSON.stringify(tickerData, null, 2);
+      const dataBlob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(dataBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${selectedTicker}_data.json`;
+      link.click();
+    } else {
+      // CSV export
+      let csv = "Date,Float Shares,Market Cap,Price\n";
+      tickerData.historicalData.forEach(point => {
+        csv += `${point.date},${point.float_shares || ''},${point.market_cap || ''},${point.price || ''}\n`;
+      });
+      
+      const dataBlob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(dataBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${selectedTicker}_data.csv`;
+      link.click();
+    }
+    
+    toast.success(`Exported as ${format.toUpperCase()}`);
   };
+
+  const metrics = calculateMetrics();
 
   return (
     <div className="min-h-screen bg-background">
@@ -109,34 +178,39 @@ const Index = () => {
         </div>
 
         {/* Metrics Cards */}
-        {selectedTicker && (
+        {selectedTicker && tickerData && !isLoading && (
           <>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
               <MetricsCard
                 title="Current Float"
-                value="35.0M"
-                change="+16.7% from last event"
-                changeType="negative"
+                value={metrics.currentFloat}
+                change={metrics.floatChange !== "N/A" ? `${metrics.floatChange} YTD` : undefined}
+                changeType={
+                  metrics.floatChange.startsWith('+') ? "negative" : 
+                  metrics.floatChange.startsWith('-') ? "positive" : 
+                  "neutral"
+                }
                 icon={Activity}
               />
               <MetricsCard
                 title="Market Cap"
-                value="$2.5B"
-                change="+13.6% YTD"
-                changeType="positive"
+                value={metrics.currentMarketCap}
                 icon={DollarSign}
               />
               <MetricsCard
                 title="Float Change (YTD)"
-                value="+5.0M"
-                change="16.7% increase"
-                changeType="negative"
+                value={metrics.floatChange}
+                changeType={
+                  metrics.floatChange.startsWith('+') ? "negative" : 
+                  metrics.floatChange.startsWith('-') ? "positive" : 
+                  "neutral"
+                }
                 icon={TrendingUp}
               />
               <MetricsCard
                 title="Corporate Actions"
-                value="4"
-                change="Last 12 months"
+                value={metrics.actionsCount.toString()}
+                change="Tracked events"
                 changeType="neutral"
                 icon={BarChart3}
               />
@@ -145,10 +219,10 @@ const Index = () => {
             {/* Charts Section */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
               <div className="lg:col-span-2">
-                <FloatChart data={mockChartData} />
+                <FloatChart data={formatChartData()} />
               </div>
               <div className="lg:col-span-1">
-                <CorporateActionsTimeline actions={mockActions} />
+                <CorporateActionsTimeline actions={formatActions()} />
               </div>
             </div>
 
@@ -166,7 +240,7 @@ const Index = () => {
         )}
 
         {/* Empty State */}
-        {!selectedTicker && (
+        {!selectedTicker && !isLoading && (
           <div className="text-center py-20">
             <BarChart3 className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
             <h2 className="text-2xl font-semibold mb-2">Search for a Ticker</h2>
@@ -174,6 +248,13 @@ const Index = () => {
               Enter a U.S. small-cap stock ticker symbol above to view its historical float, 
               market cap, and all corporate actions that affected share structure.
             </p>
+          </div>
+        )}
+
+        {isLoading && (
+          <div className="text-center py-20">
+            <div className="animate-spin h-12 w-12 border-4 border-primary border-t-transparent rounded-full mx-auto mb-4"></div>
+            <p className="text-muted-foreground">Loading data...</p>
           </div>
         )}
       </main>
