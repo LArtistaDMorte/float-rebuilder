@@ -28,7 +28,7 @@ export const useTickerData = (ticker: string | null) => {
         .from("tickers")
         .select("*")
         .eq("symbol", ticker.toUpperCase())
-        .single();
+        .maybeSingle();
 
       if (tickerError) throw tickerError;
       if (!tickerData) return null;

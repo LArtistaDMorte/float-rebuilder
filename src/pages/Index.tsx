@@ -12,7 +12,7 @@ const Index = () => {
   const [ticker, setTicker] = useState("");
   const [selectedTicker, setSelectedTicker] = useState("");
   
-  const { data: tickerData, isLoading, refetch } = useTickerData(selectedTicker);
+  const { data: tickerData, isLoading, error, refetch } = useTickerData(selectedTicker);
   const fetchMarketData = useFetchMarketData();
   const fetchSECFilings = useFetchSECFilings();
 
@@ -22,23 +22,33 @@ const Index = () => {
       return;
     }
     
-    setSelectedTicker(ticker);
-    toast.loading("Fetching data...");
+    const loadingToast = toast.loading("Fetching data...");
     
     try {
-      // Fetch SEC filings
+      // Step 1: Fetch SEC filings first (this creates the ticker record)
       await fetchSECFilings(ticker);
       
-      // Fetch market data
-      await fetchMarketData(ticker);
+      // Step 2: Fetch market data
+      const marketDataResult = await fetchMarketData(ticker);
       
-      // Refetch the data
+      // Step 3: Set the selected ticker (triggers the query)
+      setSelectedTicker(ticker);
+      
+      // Step 4: Refetch to get the latest data
       await refetch();
       
-      toast.success(`Data loaded for ${ticker}`);
+      toast.dismiss(loadingToast);
+      
+      // Check if market data fetch failed due to missing API keys
+      if (marketDataResult && !marketDataResult.success) {
+        toast.warning("Data fetched, but market data API keys may be missing. Add FINNHUB_API_KEY, POLYGON_API_KEY, or ALPHA_VANTAGE_API_KEY in Cloud → Secrets.");
+      } else {
+        toast.success(`Data loaded for ${ticker}`);
+      }
     } catch (error) {
       console.error("Error fetching data:", error);
-      toast.error("Failed to fetch data. See console for details.");
+      toast.dismiss(loadingToast);
+      toast.error("Failed to fetch data. Check console for details.");
     }
   };
 
@@ -247,6 +257,28 @@ const Index = () => {
             <p className="text-muted-foreground max-w-md mx-auto">
               Enter a U.S. small-cap stock ticker symbol above to view its historical float, 
               market cap, and all corporate actions that affected share structure.
+            </p>
+          </div>
+        )}
+
+        {/* No Data Available State */}
+        {selectedTicker && !tickerData && !isLoading && !error && (
+          <div className="text-center py-20">
+            <BarChart3 className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
+            <h2 className="text-2xl font-semibold mb-2">No Data Available Yet</h2>
+            <p className="text-muted-foreground max-w-md mx-auto">
+              Data for {selectedTicker} is being processed. Try searching again in a moment.
+            </p>
+          </div>
+        )}
+
+        {/* Error State */}
+        {error && (
+          <div className="text-center py-20">
+            <BarChart3 className="h-16 w-16 text-destructive mx-auto mb-4" />
+            <h2 className="text-2xl font-semibold mb-2 text-destructive">Error Loading Data</h2>
+            <p className="text-muted-foreground max-w-md mx-auto">
+              Failed to load data for {selectedTicker}. Please try again.
             </p>
           </div>
         )}
