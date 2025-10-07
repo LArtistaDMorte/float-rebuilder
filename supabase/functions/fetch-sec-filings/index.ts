@@ -88,7 +88,7 @@ serve(async (req) => {
 
     const recentFilings = submissionsData.filings?.recent;
     if (recentFilings) {
-      for (let i = 0; i < recentFilings.form.length && i < 50; i++) {
+      for (let i = 0; i < recentFilings.form.length && i < 200; i++) {
         const form = recentFilings.form[i];
         if (filingTypes.includes(form)) {
           filings.push({

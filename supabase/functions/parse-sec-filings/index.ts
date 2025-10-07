@@ -13,7 +13,8 @@ serve(async (req) => {
 
   try {
     const { ticker, limit } = await req.json();
-    console.log(`Parsing SEC filings for ${ticker}${limit ? `, limit: ${limit}` : ' (all unprocessed)'}`);
+    const fetchLimit = typeof limit === 'number' ? limit : undefined;
+    console.log(`Parsing SEC filings for ${ticker}${fetchLimit !== undefined ? `, limit: ${fetchLimit}` : ' (all unprocessed)'}`);
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -48,8 +49,8 @@ serve(async (req) => {
       .eq('processed', false)
       .order('filing_date', { ascending: false });
     
-    if (limit) {
-      query = query.limit(limit);
+    if (typeof fetchLimit === 'number') {
+      query = query.limit(fetchLimit);
     }
     
     const { data: filings, error: filingsError } = await query;
