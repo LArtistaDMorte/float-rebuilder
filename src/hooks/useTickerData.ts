@@ -42,15 +42,19 @@ export const useTickerData = (ticker: string | null) => {
         }
 
         // Get historical data
-        const { data: historicalData, error: historicalError } = await supabase
-          .from("historical_data")
-          .select("date, float_shares, market_cap, price")
-          .eq("ticker_id", tickerData.id)
-          .order("date", { ascending: true });
+        let historicalData: HistoricalDataPoint[] = [];
+        try {
+          const { data, error: historicalError } = await supabase
+            .from("historical_data")
+            .select("date, float_shares, market_cap, price")
+            .eq("ticker_id", tickerData.id)
+            .order("date", { ascending: true });
 
-        if (historicalError) {
-          console.error('Error fetching historical data:', historicalError);
-          throw historicalError;
+          if (historicalError) throw historicalError;
+          historicalData = data as HistoricalDataPoint[];
+        } catch (err) {
+          console.error('Error fetching historical data:', err);
+          historicalData = [];
         }
 
         // Get corporate actions
@@ -69,10 +73,16 @@ export const useTickerData = (ticker: string | null) => {
           corporateActions = [];
         }
 
+        console.log('Ticker data result:', {
+          ticker: tickerData,
+          historicalData,
+          corporateActions
+        });
+
         return {
           ticker: tickerData,
-          historicalData: historicalData as HistoricalDataPoint[],
-          corporateActions: corporateActions as CorporateAction[],
+          historicalData,
+          corporateActions,
         };
       } catch (err) {
         console.error('useTickerData error:', err);
