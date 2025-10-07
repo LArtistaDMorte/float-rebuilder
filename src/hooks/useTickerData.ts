@@ -54,15 +54,19 @@ export const useTickerData = (ticker: string | null) => {
         }
 
         // Get corporate actions
-        const { data: corporateActions, error: actionsError } = await supabase
-          .from("corporate_actions")
-          .select("*")
-          .eq("ticker_id", tickerData.id)
-          .order("action_date", { ascending: false });
+        let corporateActions: CorporateAction[] = [];
+        try {
+          const { data, error: actionsError } = await supabase
+            .from("corporate_actions")
+            .select("*")
+            .eq("ticker_id", tickerData.id)
+            .order("action_date", { ascending: false });
 
-        if (actionsError) {
-          console.error('Error fetching corporate actions:', actionsError);
-          throw actionsError;
+          if (actionsError) throw actionsError;
+          corporateActions = data as CorporateAction[];
+        } catch (err) {
+          console.error('Error fetching corporate actions:', err);
+          corporateActions = [];
         }
 
         return {
