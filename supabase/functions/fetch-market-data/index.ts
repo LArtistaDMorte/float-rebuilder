@@ -21,8 +21,8 @@ serve(async (req) => {
     console.log(`Fetching market data for ${ticker} from ${startDate} to ${endDate}`);
 
     // Initialize Supabase client
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabaseUrl = Deno.env.get('supabase_url')!;
+    const supabaseKey = Deno.env.get('supabase_service_role_key')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     // Get API keys from secrets (optional - configure based on which APIs you want to use)
