@@ -39,7 +39,7 @@ const Index = () => {
       
       try {
         const { data: parseData, error: parseError } = await supabase.functions.invoke('parse-sec-filings', {
-          body: { ticker, limit: 5 }
+          body: { ticker }
         });
 
         toast.dismiss(parsingToast);
@@ -58,9 +58,8 @@ const Index = () => {
         toast.warning("Filing parsing failed, but market data is available");
       }
       
-      // Step 4: Set selected ticker and refetch to show all data
+      // Step 4: Set selected ticker to show all data
       setSelectedTicker(ticker);
-      await refetch();
       
       // Final status message
       if (marketDataResult && !marketDataResult.success) {
